@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Складские операции</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#f4f6f9;color:#192738;font:16px/1.55 system-ui,sans-serif}main{max-width:1080px;margin:45px auto;padding:0 28px}h1{font-size:36px;margin:0}h2{font-size:21px;margin-top:32px}p{color:#536374}.top{display:flex;justify-content:space-between;align-items:center}form,.toolbar{display:flex;gap:12px;flex-wrap:wrap;align-items:end}label{display:grid;gap:4px;font-size:14px}input,select,button{padding:10px 13px;border:1px solid #c9d2dc;border-radius:5px;font:inherit}button{background:#17496d;color:white;cursor:pointer}button:disabled{opacity:.5}section{margin:22px 0;background:white;padding:24px;border:1px solid #dce2e8}.metrics{display:flex;gap:65px;padding:18px 0}.number{display:block;font-size:40px;font-weight:650}.muted{color:#667789;font-size:14px}.bar{display:grid;grid-template-columns:110px 1fr 60px;align-items:center;gap:12px;margin:10px 0}meter{width:100%;height:24px}table{border-collapse:collapse;width:100%;font-size:14px}td,th{padding:10px;border-bottom:1px solid #dce2e8;text-align:left}#status{min-height:26px;color:#9e3326}.hidden{display:none}a{color:#17496d}footer{font-size:13px;color:#667789;margin:25px 0}
+</style></head><body><main>
+<div class="top"><div><span class="muted">WarehouseManagement · ПМ.01</span><h1>Складские операции</h1></div><a href="/swagger">Документация API</a></div>
+<p>Журнал поступлений, отгрузок и инвентаризаций. Аналитика доступна администраторам и менеджерам.</p>
+<section id="login"><h2 style="margin-top:0">Вход в систему</h2><form id="loginForm"><label>Имя пользователя<input id="username" autocomplete="username" required></label><label>Пароль<input id="password" type="password" autocomplete="current-password" required></label><button>Войти</button></form></section>
+<div id="status" role="status" aria-live="polite"></div>
+<div id="workspace" class="hidden"><div class="toolbar"><label>Тип события<select id="filter"><option value="">Все типы</option><option>Arrival</option><option>Departure</option><option>Inventory</option></select></label><button id="refresh">Обновить</button><button id="csv">Скачать CSV</button><button id="logout">Выйти</button><span id="identity"></span></div>
+<section><div class="metrics"><div><span class="number" id="count">—</span>событий</div><div><span class="number" id="quantity">—</span>единиц в операциях</div></div><p class="muted">Сумма по операциям не является текущим остатком товаров.</p><h2>События по типам</h2><div id="types"></div><h2>Операции по зонам</h2><div id="zones"></div><p class="muted" id="updated"></p></section>
+<section><h2 style="margin-top:0">Последние события</h2><div style="overflow:auto"><table><thead><tr><th>ID</th><th>Тип</th><th>Товар</th><th>Количество</th><th>Зона</th><th>Дата UTC</th></tr></thead><tbody id="rows"></tbody></table></div></section></div>
+<footer>Учебный прототип журнала складских операций. Токен хранится только в памяти этой страницы.</footer>
+</main><script>
+let token = "";
+const labels = {
+    Arrival: "Приход",
+    Departure: "Расход",
+    Inventory: "Инвентаризация"
+};
+
+function element(id) {
+    return document.getElementById(id);
+}
+
+function showStatus(message) {
+    element("status").textContent = message;
+}
+
+function filterQuery() {
+    const type = element("filter").value;
+    return type ? "?" + new URLSearchParams({ type }) : "";
+}
+
+async function get(url) {
+    const response = await fetch(url, {
+        headers: { Authorization: "Bearer " + token }
+    });
+
+    if (response.status === 401) {
+        throw new Error("Вход не выполнен или срок токена истёк.");
+    }
+    if (response.status === 403) {
+        throw new Error("Недостаточно прав для аналитики.");
+    }
+    if (!response.ok) {
+        throw new Error("Ошибка запроса: " + response.status);
+    }
+    return response;
+}
+
+function drawBars(container, items, labelKey, total) {
+    container.replaceChildren();
+    for (const item of items) {
+        const row = document.createElement("div");
+        row.className = "bar";
+
+        const name = document.createElement("span");
+        name.textContent = labels[item[labelKey]] ?? item[labelKey];
+
+        const meter = document.createElement("meter");
+        meter.max = Math.max(total, 1);
+        meter.value = item.count;
+
+        const count = document.createElement("span");
+        count.textContent = item.count;
+        row.append(name, meter, count);
+        container.append(row);
+    }
+}
+
+function drawEvents(events) {
+    const table = element("rows");
+    table.replaceChildren();
+    const recentEvents = events.sort((first, second) => second.id - first.id).slice(0, 10);
+    for (const event of recentEvents) {
+        const row = table.insertRow();
+        const columns = [
+            event.id,
+            labels[event.eventType] ?? event.eventType,
+            event.productName,
+            event.quantity,
+            event.warehouseZone,
+            event.eventDate
+        ];
+        for (const value of columns) {
+            row.insertCell().textContent = value;
+        }
+    }
+}
+
+async function refresh() {
+    showStatus("");
+    try {
+        const query = filterQuery();
+        const [summaryResponse, eventsResponse] = await Promise.all([
+            get("/api/Analytics/summary" + query),
+            get("/api/WarehouseEvents" + query)
+        ]);
+        const summary = await summaryResponse.json();
+        const events = await eventsResponse.json();
+
+        element("count").textContent = summary.totalEvents;
+        element("quantity").textContent = summary.totalQuantity;
+        element("updated").textContent = "Сводка сформирована: " + summary.generatedAtUtc;
+        drawBars(element("types"), summary.byEventType, "eventType", summary.totalEvents);
+        drawBars(element("zones"), summary.byZone, "zone", summary.totalEvents);
+        drawEvents(events);
+    } catch (error) {
+        showStatus(error.message);
+    }
+}
+
+async function login(event) {
+    event.preventDefault();
+    try {
+        const username = element("username").value;
+        const password = element("password").value;
+        const response = await fetch("/api/Auth/login", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ username, password })
+        });
+
+        if (!response.ok) {
+            throw new Error("Не удалось войти. Проверьте имя и пароль.");
+        }
+        const account = await response.json();
+        token = account.token;
+        element("password").value = "";
+        element("login").classList.add("hidden");
+        element("workspace").classList.remove("hidden");
+        element("identity").textContent = username + " · " + account.role;
+        await refresh();
+    } catch (error) {
+        showStatus(error.message);
+    }
+}
+
+function logout() {
+    token = "";
+    element("workspace").classList.add("hidden");
+    element("login").classList.remove("hidden");
+    element("rows").replaceChildren();
+    showStatus("");
+}
+
+async function downloadCsv() {
+    try {
+        const response = await get("/api/WarehouseEvents/report/csv" + filterQuery());
+        const url = URL.createObjectURL(await response.blob());
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = "warehouse_events.csv";
+        link.click();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (error) {
+        showStatus(error.message);
+    }
+}
+
+element("loginForm").addEventListener("submit", login);
+element("refresh").addEventListener("click", refresh);
+element("filter").addEventListener("change", refresh);
+element("logout").addEventListener("click", logout);
+element("csv").addEventListener("click", downloadCsv);
+</script></body></html>
