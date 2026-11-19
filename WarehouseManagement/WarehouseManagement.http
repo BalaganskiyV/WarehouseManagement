@@ -1,0 +1,33 @@
+@baseUrl = http://localhost:5208
+@token = REPLACE_WITH_TOKEN_FROM_LOGIN
+
+###
+POST {{baseUrl}}/api/Auth/register
+Content-Type: application/json
+
+{"username":"student","password":"REPLACE_WITH_A_UNIQUE_PASSWORD","email":"student@example.invalid"}
+
+###
+POST {{baseUrl}}/api/Auth/login
+Content-Type: application/json
+
+{"username":"student","password":"REPLACE_WITH_A_UNIQUE_PASSWORD"}
+
+###
+GET {{baseUrl}}/api/Products
+Authorization: Bearer {{token}}
+
+###
+POST {{baseUrl}}/api/WarehouseEvents
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{"eventType":"Arrival","productId":1,"quantity":10,"warehouseZone":"A-1","description":"Поставка"}
+
+###
+GET {{baseUrl}}/api/Analytics/summary
+Authorization: Bearer {{token}}
+
+###
+POST {{baseUrl}}/api/generate/events?count=500
+Authorization: Bearer {{token}}
